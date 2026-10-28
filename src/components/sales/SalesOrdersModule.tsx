@@ -95,6 +95,8 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({ onNavigate
   const [showProductDropdown, setShowProductDropdown] = useState(false);
   const [discountValue, setDiscountValue] = useState<number | string>(0);
   const [discountType, setDiscountType] = useState<'BDT' | '%'>('BDT');
+  const [vatValue, setVatValue] = useState<number | string>(5);
+  const [vatType, setVatType] = useState<'BDT' | '%'>('%');
   const [paymentMode, setPaymentMode] = useState<string>('Credit (Due)');
   const [orderNote, setOrderNote] = useState('');
   const [quickItems, setQuickItems] = useState<QuickOrderItem[]>(INITIAL_QUICK_ITEMS);
@@ -108,6 +110,8 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({ onNavigate
       clearSalesOrders();
       setQuickItems([]);
       setDiscountValue(0);
+      setVatValue(5);
+      setVatType('%');
       setOrderNote('');
       setProductSearchInput('');
       setSelectedBuyerId('');
@@ -204,9 +208,26 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({ onNavigate
     return val;
   }, [discountValue, discountType, subTotal]);
 
-  const netTotal = useMemo(() => {
+  const taxableBase = useMemo(() => {
     return Math.max(0, subTotal - discountAmount);
   }, [subTotal, discountAmount]);
+
+  const vatAmount = useMemo(() => {
+    const val = Number(vatValue) || 0;
+    if (vatType === '%') {
+      return Math.round((taxableBase * val) / 100);
+    }
+    return Math.max(0, Math.round(val));
+  }, [vatValue, vatType, taxableBase]);
+
+  const effectiveVatRate = useMemo(() => {
+    if (vatType === '%') return Number(vatValue) || 0;
+    return taxableBase > 0 ? Number(((vatAmount / taxableBase) * 100).toFixed(2)) : 0;
+  }, [vatType, vatValue, taxableBase, vatAmount]);
+
+  const netTotal = useMemo(() => {
+    return Math.max(0, taxableBase + vatAmount);
+  }, [taxableBase, vatAmount]);
 
   // Credit limit calculation
   const creditLimit = selectedBuyer?.creditLimitBDT || 50000;
@@ -318,7 +339,8 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({ onNavigate
       items: orderItems,
       subTotalBDT: subTotal,
       discountBDT: discountAmount,
-      taxVatBDT: 0,
+      taxVatBDT: vatAmount,
+      vatRatePercent: effectiveVatRate,
       netAmountBDT: netTotal,
       paidAmountBDT: paymentMode === 'Credit (Due)' ? 0 : netTotal,
       dueAmountBDT: paymentMode === 'Credit (Due)' ? netTotal : 0,
@@ -351,6 +373,8 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({ onNavigate
     setShowProductDropdown(false);
     setDiscountValue(0);
     setDiscountType('BDT');
+    setVatValue(5);
+    setVatType('%');
     setOrderNote('');
     setPaymentMode('Credit (Due)');
 
@@ -365,6 +389,8 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({ onNavigate
     setShowProductDropdown(false);
     setDiscountValue(0);
     setDiscountType('BDT');
+    setVatValue(5);
+    setVatType('%');
     setOrderNote('');
     setPaymentMode('Credit (Due)');
   };
@@ -874,6 +900,63 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({ onNavigate
                   <option value="BDT">৳</option>
                   <option value="%">%</option>
                 </select>
+              </div>
+            </div>
+
+            {/* VAT / Tax */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">VAT / Tax</span>
+                  <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold font-mono">
+                    ({effectiveVatRate}%)
+                  </span>
+                </div>
+                <div className="flex items-center border border-slate-300 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-800">
+                  <input
+                    type="number"
+                    min={0}
+                    step={vatType === '%' ? '0.5' : '1'}
+                    value={vatValue}
+                    onChange={(e) => setVatValue(e.target.value)}
+                    className="w-16 px-2 py-1 text-right text-xs font-bold text-slate-800 dark:text-slate-100 bg-transparent focus:outline-hidden"
+                  />
+                  <select
+                    value={vatType}
+                    onChange={(e) => setVatType(e.target.value as 'BDT' | '%')}
+                    className="bg-slate-100 dark:bg-slate-700 border-l border-slate-300 dark:border-slate-700 px-1.5 py-1 text-xs font-bold text-slate-700 dark:text-slate-200 focus:outline-hidden cursor-pointer"
+                  >
+                    <option value="%">%</option>
+                    <option value="BDT">৳</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* VAT presets */}
+              <div className="flex items-center justify-between text-[10px] text-slate-500">
+                <div className="flex items-center gap-1 flex-wrap">
+                  <span className="text-[10px] text-slate-400">Presets:</span>
+                  {[0, 5, 7.5, 10, 15].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => {
+                        setVatType('%');
+                        setVatValue(preset);
+                      }}
+                      className={`px-1.5 py-0.5 rounded font-bold cursor-pointer transition-colors ${
+                        vatType === '%' && Number(vatValue) === preset
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      {preset}%
+                    </button>
+                  ))}
+                </div>
+                <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
+                  +৳{vatAmount.toLocaleString()}
+                </span>
               </div>
             </div>
 
@@ -1568,6 +1651,12 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({ onNavigate
                   <div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400">
                     <span>Discount ({discountType === '%' ? `${discountValue}%` : `BDT ${discountValue}`})</span>
                     <span className="font-mono font-bold">- ৳{discountAmount.toLocaleString()}</span>
+                  </div>
+                )}
+                {vatAmount > 0 && (
+                  <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                    <span>VAT / Tax ({effectiveVatRate}%)</span>
+                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200">+ ৳{vatAmount.toLocaleString()}</span>
                   </div>
                 )}
                 <div className="border-t border-slate-200 dark:border-slate-700 pt-2 flex items-center justify-between text-sm">

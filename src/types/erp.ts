@@ -1038,6 +1038,7 @@ export interface SalesOrder {
   subTotalBDT: number;
   discountBDT?: number;
   taxVatBDT: number;
+  vatRatePercent?: number;
   netAmountBDT: number;
   paidAmountBDT: number;
   dueAmountBDT?: number;

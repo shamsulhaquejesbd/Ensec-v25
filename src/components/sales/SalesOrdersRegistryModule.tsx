@@ -33,6 +33,7 @@ import {
   TrendingDown,
   Info,
   PackageCheck,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext.tsx';
 import { SalesOrder, SalesOrderItem, CashBookEntry } from '../../types/erp.ts';
@@ -98,6 +99,15 @@ export const SalesOrdersRegistryModule: React.FC<SalesOrdersRegistryModuleProps>
   const [reviewItems, setReviewItems] = useState<SalesOrderItem[]>([]);
   const [reviewNotes, setReviewNotes] = useState<string>('');
   const [originalRates, setOriginalRates] = useState<Record<string, number>>({});
+  const [reviewVatRate, setReviewVatRate] = useState<number>(5);
+  const [reviewVatAmount, setReviewVatAmount] = useState<number>(0);
+  const [reviewVatMode, setReviewVatMode] = useState<'percent' | 'amount'>('percent');
+
+  // VAT / Tax editing state for Commercial Tax Invoice Modal
+  const [isEditingInvoiceVat, setIsEditingInvoiceVat] = useState(false);
+  const [invoiceEditVatRate, setInvoiceEditVatRate] = useState<number>(5);
+  const [invoiceEditVatAmount, setInvoiceEditVatAmount] = useState<number>(0);
+  const [invoiceVatMode, setInvoiceVatMode] = useState<'percent' | 'amount'>('percent');
 
   // All unique customers from orders and database
   const customerOptions = useMemo(() => {
@@ -310,6 +320,24 @@ export const SalesOrdersRegistryModule: React.FC<SalesOrdersRegistryModuleProps>
     setOriginalRates(origMap);
     setReviewItems(clonedItems);
     setReviewNotes(order.notes || '');
+
+    const initialRate = order.vatRatePercent !== undefined ? order.vatRatePercent : 5;
+    const initialAmount = order.taxVatBDT !== undefined ? order.taxVatBDT : 0;
+    setReviewVatRate(initialRate);
+    setReviewVatAmount(initialAmount);
+    setReviewVatMode('percent');
+  };
+
+  const handleOpenInvoiceModal = (order: SalesOrder) => {
+    setSelectedOrderForInvoice(order);
+    const taxableBase = Math.max(0, order.subTotalBDT - (order.discountBDT || 0));
+    const rate = order.vatRatePercent !== undefined
+      ? order.vatRatePercent
+      : (taxableBase > 0 && order.taxVatBDT ? Number(((order.taxVatBDT / taxableBase) * 100).toFixed(2)) : 5);
+    setInvoiceEditVatRate(rate);
+    setInvoiceEditVatAmount(order.taxVatBDT || 0);
+    setInvoiceVatMode('percent');
+    setIsEditingInvoiceVat(false);
   };
 
   const handleRateChange = (idx: number, newRate: number) => {
@@ -356,9 +384,83 @@ export const SalesOrdersRegistryModule: React.FC<SalesOrdersRegistryModuleProps>
     return reviewItems.reduce((sum, item) => sum + (item.discountBDT || 0), 0);
   }, [reviewItems]);
 
-  const reviewTaxVat = useMemo(() => {
-    return Math.round((reviewSubtotal - reviewTotalDiscount) * 0.05);
+  const reviewTaxBase = useMemo(() => {
+    return Math.max(0, reviewSubtotal - reviewTotalDiscount);
   }, [reviewSubtotal, reviewTotalDiscount]);
+
+  const reviewTaxVat = useMemo(() => {
+    if (reviewVatMode === 'amount') {
+      return Math.max(0, Math.round(reviewVatAmount || 0));
+    }
+    return Math.max(0, Math.round(reviewTaxBase * ((reviewVatRate || 0) / 100)));
+  }, [reviewTaxBase, reviewVatMode, reviewVatRate, reviewVatAmount]);
+
+  const reviewEffectiveVatPercent = useMemo(() => {
+    if (reviewVatMode === 'percent') return reviewVatRate;
+    return reviewTaxBase > 0 ? Number(((reviewTaxVat / reviewTaxBase) * 100).toFixed(2)) : 0;
+  }, [reviewVatMode, reviewVatRate, reviewTaxBase, reviewTaxVat]);
+
+  const handleReviewVatRateChange = (newRate: number) => {
+    const rate = Math.max(0, Number(newRate) || 0);
+    setReviewVatRate(rate);
+    setReviewVatMode('percent');
+    setReviewVatAmount(Math.round(reviewTaxBase * (rate / 100)));
+  };
+
+  const handleReviewVatAmountChange = (newAmount: number) => {
+    const amount = Math.max(0, Number(newAmount) || 0);
+    setReviewVatAmount(amount);
+    setReviewVatMode('amount');
+    setReviewVatRate(reviewTaxBase > 0 ? Number(((amount / reviewTaxBase) * 100).toFixed(2)) : 0);
+  };
+
+  // Handlers for Commercial Tax Invoice Modal VAT Editing
+  const handleInvoiceVatRateChange = (newRate: number) => {
+    const rate = Math.max(0, Number(newRate) || 0);
+    setInvoiceEditVatRate(rate);
+    setInvoiceVatMode('percent');
+    if (selectedOrderForInvoice) {
+      const base = Math.max(0, selectedOrderForInvoice.subTotalBDT - (selectedOrderForInvoice.discountBDT || 0));
+      setInvoiceEditVatAmount(Math.round(base * (rate / 100)));
+    }
+  };
+
+  const handleInvoiceVatAmountChange = (newAmount: number) => {
+    const amount = Math.max(0, Number(newAmount) || 0);
+    setInvoiceEditVatAmount(amount);
+    setInvoiceVatMode('amount');
+    if (selectedOrderForInvoice) {
+      const base = Math.max(0, selectedOrderForInvoice.subTotalBDT - (selectedOrderForInvoice.discountBDT || 0));
+      setInvoiceEditVatRate(base > 0 ? Number(((amount / base) * 100).toFixed(2)) : 0);
+    }
+  };
+
+  const handleSaveInvoiceVatChange = () => {
+    if (!selectedOrderForInvoice) return;
+    const base = Math.max(0, selectedOrderForInvoice.subTotalBDT - (selectedOrderForInvoice.discountBDT || 0));
+    const newVatAmount = invoiceVatMode === 'amount'
+      ? Math.max(0, Math.round(invoiceEditVatAmount || 0))
+      : Math.max(0, Math.round(base * ((invoiceEditVatRate || 0) / 100)));
+    const newVatRate = invoiceVatMode === 'percent'
+      ? invoiceEditVatRate
+      : (base > 0 ? Number(((newVatAmount / base) * 100).toFixed(2)) : 0);
+    const newNetPayable = Math.max(0, base + newVatAmount);
+    const paid = selectedOrderForInvoice.paidAmountBDT || 0;
+    const newDue = Math.max(0, newNetPayable - paid);
+
+    const updates: Partial<SalesOrder> = {
+      taxVatBDT: newVatAmount,
+      vatRatePercent: newVatRate,
+      netAmountBDT: newNetPayable,
+      dueAmountBDT: newDue,
+    };
+
+    updateSalesOrder(selectedOrderForInvoice.id, updates);
+    setSelectedOrderForInvoice((prev) => prev ? { ...prev, ...updates } : null);
+    setIsEditingInvoiceVat(false);
+    setNotificationBanner(`VAT / Tax updated to ৳${newVatAmount.toLocaleString()} (${newVatRate}%) for Order ${selectedOrderForInvoice.orderNumber}.`);
+    setTimeout(() => setNotificationBanner(null), 4000);
+  };
 
   const reviewNetAmount = useMemo(() => {
     return Math.max(0, reviewSubtotal - reviewTotalDiscount + reviewTaxVat);
@@ -389,6 +491,7 @@ export const SalesOrdersRegistryModule: React.FC<SalesOrdersRegistryModuleProps>
       subTotalBDT: reviewSubtotal,
       discountBDT: reviewTotalDiscount,
       taxVatBDT: reviewTaxVat,
+      vatRatePercent: reviewEffectiveVatPercent,
       netAmountBDT: reviewNetAmount,
       dueAmountBDT: reviewDueAmount,
       notes: reviewNotes.trim()
@@ -1046,7 +1149,7 @@ export const SalesOrdersRegistryModule: React.FC<SalesOrdersRegistryModuleProps>
                           {/* View Order Copy / Tax Invoice */}
                           <button
                             type="button"
-                            onClick={() => setSelectedOrderForInvoice(so)}
+                            onClick={() => handleOpenInvoiceModal(so)}
                             className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                             title="Check Order Copy / Tax Invoice"
                           >
@@ -1481,9 +1584,89 @@ export const SalesOrdersRegistryModule: React.FC<SalesOrdersRegistryModuleProps>
                   </div>
                 )}
 
-                <div className="flex justify-between text-slate-500">
-                  <span>VAT / Tax (5%):</span>
-                  <span>৳ {reviewTaxVat.toLocaleString()}</span>
+                {/* Accounts VAT / Tax Control Box */}
+                <div className="py-2.5 px-3 rounded-xl bg-white dark:bg-slate-850 border border-slate-200 dark:border-slate-700/80 space-y-2">
+                  <div className="flex justify-between items-center text-slate-700 dark:text-slate-300">
+                    <span className="font-bold text-[11px]">
+                      VAT / Tax ({reviewEffectiveVatPercent}%):
+                    </span>
+                    <span className="font-bold font-mono text-xs">
+                      ৳ {reviewTaxVat.toLocaleString()}
+                    </span>
+                  </div>
+
+                  {/* Mode and Quick Presets */}
+                  <div className="flex items-center justify-between gap-1 text-[10px]">
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span className="text-slate-400 font-sans">Presets:</span>
+                      {[0, 5, 7.5, 10, 15].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => handleReviewVatRateChange(preset)}
+                          className={`px-1.5 py-0.5 rounded font-bold font-mono transition-colors cursor-pointer ${
+                            reviewVatMode === 'percent' && reviewVatRate === preset
+                              ? 'bg-blue-600 text-white shadow-xs'
+                              : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600'
+                          }`}
+                        >
+                          {preset}%
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-0.5 bg-slate-100 dark:bg-slate-700 p-0.5 rounded-lg">
+                      <button
+                        type="button"
+                        onClick={() => setReviewVatMode('percent')}
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
+                          reviewVatMode === 'percent'
+                            ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs'
+                            : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                        }`}
+                      >
+                        %
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReviewVatMode('amount')}
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
+                          reviewVatMode === 'amount'
+                            ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs'
+                            : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                        }`}
+                      >
+                        ৳
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Interactive Rate & Amount Inputs */}
+                  <div className="grid grid-cols-2 gap-2 pt-0.5">
+                    <div>
+                      <label className="block text-[10px] text-slate-400 font-sans font-medium mb-0.5">Rate (%)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.5"
+                        value={reviewVatRate}
+                        onChange={(e) => handleReviewVatRateChange(parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-mono text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-400 font-sans font-medium mb-0.5">Amount (৳)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={reviewVatAmount}
+                        onChange={(e) => handleReviewVatAmountChange(parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-mono text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between items-baseline font-black text-sm">
@@ -1517,7 +1700,7 @@ export const SalesOrdersRegistryModule: React.FC<SalesOrdersRegistryModuleProps>
               <button
                 type="button"
                 onClick={() => {
-                  setSelectedOrderForInvoice(reviewOrder);
+                  handleOpenInvoiceModal(reviewOrder);
                 }}
                 className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold text-xs cursor-pointer transition-colors"
                 title="View printable tax invoice copy"
@@ -1646,7 +1829,7 @@ export const SalesOrdersRegistryModule: React.FC<SalesOrdersRegistryModuleProps>
 
             {/* Calculations & Totals */}
             <div className="flex justify-end">
-              <div className="w-64 space-y-1.5 font-mono text-xs">
+              <div className="w-72 sm:w-80 space-y-2 font-mono text-xs">
                 <div className="flex justify-between text-slate-500">
                   <span>Subtotal:</span>
                   <span>৳ {selectedOrderForInvoice.subTotalBDT.toLocaleString()}</span>
@@ -1657,10 +1840,139 @@ export const SalesOrdersRegistryModule: React.FC<SalesOrdersRegistryModuleProps>
                     <span>-৳ {(selectedOrderForInvoice.discountBDT || 0).toLocaleString()}</span>
                   </div>
                 )}
-                <div className="flex justify-between text-slate-500">
-                  <span>VAT / Tax (5%):</span>
-                  <span>৳ {selectedOrderForInvoice.taxVatBDT.toLocaleString()}</span>
+
+                {/* VAT / Tax Line with Interactive Input Option */}
+                <div className="py-1">
+                  <div className="flex justify-between items-center text-slate-700 dark:text-slate-300">
+                    <div className="flex items-center gap-1.5 font-sans">
+                      <span className="font-semibold text-xs">
+                        VAT / Tax ({selectedOrderForInvoice.vatRatePercent !== undefined ? `${selectedOrderForInvoice.vatRatePercent}%` : '5%'}):
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!isEditingInvoiceVat) {
+                            const base = Math.max(0, selectedOrderForInvoice.subTotalBDT - (selectedOrderForInvoice.discountBDT || 0));
+                            const currentRate = selectedOrderForInvoice.vatRatePercent !== undefined
+                              ? selectedOrderForInvoice.vatRatePercent
+                              : (base > 0 && selectedOrderForInvoice.taxVatBDT ? Number(((selectedOrderForInvoice.taxVatBDT / base) * 100).toFixed(2)) : 5);
+                            setInvoiceEditVatRate(currentRate);
+                            setInvoiceEditVatAmount(selectedOrderForInvoice.taxVatBDT || 0);
+                            setInvoiceVatMode('percent');
+                          }
+                          setIsEditingInvoiceVat(!isEditingInvoiceVat);
+                        }}
+                        className="print:hidden text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 dark:bg-blue-950 dark:hover:bg-blue-900 text-blue-600 dark:text-blue-300 font-bold border border-blue-200 dark:border-blue-800 transition-colors cursor-pointer"
+                        title="Change VAT rate percentage or amount for this sales order"
+                      >
+                        {isEditingInvoiceVat ? 'Cancel' : 'Change VAT'}
+                      </button>
+                    </div>
+                    <span className="font-bold font-mono">
+                      ৳ {selectedOrderForInvoice.taxVatBDT.toLocaleString()}
+                    </span>
+                  </div>
+
+                  {/* Inline VAT Rate & Amount Editor */}
+                  {isEditingInvoiceVat && (
+                    <div className="print:hidden mt-2 p-2.5 rounded-xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 space-y-2 font-sans text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-[10px] uppercase text-blue-700 dark:text-blue-300">
+                          Change VAT / Tax
+                        </span>
+                        <div className="flex items-center gap-0.5 bg-white dark:bg-slate-800 p-0.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                          <button
+                            type="button"
+                            onClick={() => setInvoiceVatMode('percent')}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
+                              invoiceVatMode === 'percent'
+                                ? 'bg-blue-600 text-white'
+                                : 'text-slate-600 dark:text-slate-400'
+                            }`}
+                          >
+                            %
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setInvoiceVatMode('amount')}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
+                              invoiceVatMode === 'amount'
+                                ? 'bg-blue-600 text-white'
+                                : 'text-slate-600 dark:text-slate-400'
+                            }`}
+                          >
+                            ৳
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Quick presets */}
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span className="text-[10px] text-slate-400 font-medium">Presets:</span>
+                        {[0, 5, 7.5, 10, 15].map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => handleInvoiceVatRateChange(preset)}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-colors cursor-pointer ${
+                              invoiceVatMode === 'percent' && invoiceEditVatRate === preset
+                                ? 'bg-blue-600 text-white shadow-xs'
+                                : 'bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                            }`}
+                          >
+                            {preset}%
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Inputs for Rate % and Amount ৳ */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[10px] text-slate-500 font-semibold mb-0.5">Rate (%)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.5"
+                            value={invoiceEditVatRate}
+                            onChange={(e) => handleInvoiceVatRateChange(parseFloat(e.target.value) || 0)}
+                            className="w-full px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-slate-500 font-semibold mb-0.5">Amount (৳)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={invoiceEditVatAmount}
+                            onChange={(e) => handleInvoiceVatAmountChange(parseFloat(e.target.value) || 0)}
+                            className="w-full px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex items-center justify-end gap-1.5 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingInvoiceVat(false)}
+                          className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-[10px] font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSaveInvoiceVatChange}
+                          className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold shadow-xs transition-colors cursor-pointer"
+                        >
+                          Save & Update Invoice
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
+
                 <div className="flex justify-between pt-1 border-t border-slate-200 dark:border-slate-700 font-black text-sm text-slate-900 dark:text-white">
                   <span>Net Payable:</span>
                   <span className="text-blue-600 dark:text-blue-400">

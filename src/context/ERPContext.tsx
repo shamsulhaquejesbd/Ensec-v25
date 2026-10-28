@@ -1672,6 +1672,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             subTotalBDT: Number(row.gross_amount_bdt) || 0,
             discountBDT: Number(row.discount_amount_bdt) || 0,
             taxVatBDT: Number(row.tax_vat_bdt) || 0,
+            vatRatePercent: row.vat_rate_percent !== undefined
+              ? Number(row.vat_rate_percent)
+              : Number(row.tax_vat_bdt) > 0 && Number(row.gross_amount_bdt) > 0
+              ? Number(((Number(row.tax_vat_bdt) / Math.max(1, Number(row.gross_amount_bdt) - (Number(row.discount_amount_bdt) || 0))) * 100).toFixed(1))
+              : 5,
             netAmountBDT: Number(row.net_amount_bdt) || 0,
             paidAmountBDT: Number(row.paid_amount_bdt) || 0,
             dueAmountBDT: Number(row.due_amount_bdt) || 0,
